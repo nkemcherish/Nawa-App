@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "Nawa",
+    "slug": "nawa-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "nawa",
+    "ios": { "supportsTablet": true },
+    "android": { "adaptiveIcon": { "backgroundColor": "#F7F4EC" } },
+    "web": { "bundler": "metro", "name": "Nawa — Your money, explained." }
+  }
+}
