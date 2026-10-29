@@ -1,10 +1,9 @@
-"""Vercel Python entrypoint for the private tester deployment."""
+"""Vercel Python entrypoint. Visitors do not need an access code."""
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 import sys
 import json
 import os
-import hmac
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from server import parse_pdf, parse_csv
@@ -20,11 +19,6 @@ class handler(BaseHTTPRequestHandler):
         self.end_headers();self.wfile.write(body)
 
     def do_POST(self):
-        access=os.environ.get('NAWA_TEST_CODE','')
-        if not access:
-            self.reply(503,{'error':'Tester access is not configured on this deployment.'});return
-        if not hmac.compare_digest(self.headers.get('X-Nawa-Test-Code','').encode(),access.encode()):
-            self.reply(401,{'error':'Enter the tester access code to analyse a statement.'});return
         if not os.environ.get('GEMINI_API_KEY'):
             self.reply(503,{'error':'The statement reader is not configured on this deployment.'});return
         try:
