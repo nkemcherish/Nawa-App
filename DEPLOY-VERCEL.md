@@ -9,11 +9,11 @@ Deployment files are prepared but no public deployment has been made or verified
 4. Add server environment variables for Preview and Production:
    - `GEMINI_API_KEY`: your new private Gemini key.
    - `GEMINI_MODEL`: `gemini-3.1-flash-lite`.
-   - `NAWA_TEST_CODE`: a long random code shared privately with your testers.
-5. Deploy a preview. Test onboarding, themes, a synthetic PDF, invalid access code,
+
+5. Deploy a preview. Test onboarding, themes, a synthetic PDF, 
    invalid PDF, manual backup and report/category navigation before sharing.
-6. Promote the verified deployment to Production. Share the production URL and
-   tester code privately. Future Git pushes deploy updates at the same project URL.
+6. Promote the verified deployment to Production. Share the production URL.
+   Future Git pushes deploy updates at the same project URL.
 
 ## Current testing limits
 
@@ -21,9 +21,8 @@ Deployment files are prepared but no public deployment has been made or verified
 - Function timeout is 300 seconds. Large statements or repeated AI retries can
   exceed this. A queued job pipeline and direct private storage uploads are needed
   for larger documents/longer jobs.
-- A shared tester code is a temporary access gate, not a user account or robust
-  per-user rate limiting. Monitor Gemini quotas and replace the gate with proper
-  auth and usage limits before wider public release.
+- Visitors upload without a shared password. Per-user rate limiting is not yet
+  implemented. Monitor Gemini quotas before wider public release.
 - Report storage remains in each browser, with manual download/import backup.
   Cloud sync and automatic backups are not implemented.
 - Free-tier Gemini processing terms still apply. Use synthetic/redacted data for
@@ -34,3 +33,4 @@ Deployment files are prepared but no public deployment has been made or verified
 References: https://vercel.com/docs/git,
 https://vercel.com/docs/environment-variables,
 https://vercel.com/docs/functions/limitations
+
