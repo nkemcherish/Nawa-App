@@ -1,5 +1,16 @@
 # Nawa
 
+## Updated web app and Vercel deployment
+
+The current browser version is in [`app/`](app/). It includes the revised NAWA
+interface, dark mode, category details, Gemini PDF reading and categorisation,
+and manual report backup/restore. The original Expo application below is preserved.
+
+For Vercel, use **Root Directory: `app`**. Follow
+[`DEPLOY-VERCEL.md`](DEPLOY-VERCEL.md) for private server variables and tester access.
+No Gemini keys, uploaded bank statements or saved personal reports are included.
+The public deployment has not yet been verified. Cloud report sync is not implemented.
+
 **Your money, explained.** Nawa is a local-first statement explainer built with Expo, React Native and TypeScript. The same app runs on Android, iOS and the web.
 
 ## Run it

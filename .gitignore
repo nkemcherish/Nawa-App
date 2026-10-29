@@ -4,3 +4,10 @@ dist/
 web-build/
 .DS_Store
 npm-debug.log*
+.env
+.env.*
+.vercel/
+__pycache__/
+*.pyc
+*.log
+app/synthetic-*.pdf
