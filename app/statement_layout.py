@@ -12,7 +12,7 @@ from io import BytesIO
 MONTHS = {name.lower(): i for i, name in enumerate(
     ('January', 'February', 'March', 'April', 'May', 'June', 'July',
      'August', 'September', 'October', 'November', 'December'), 1)}
-DATE = re.compile(r'\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{4}|\d{1,2}[- ](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[- ]\d{4})\b', re.I)
+DATE = re.compile(r'\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-](?:\d{4}|\d{2})|\d{1,2}[- ](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[- ]\d{4})\b', re.I)
 TIME = re.compile(r'^\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]M)?$', re.I)
 DAY = re.compile(r'\b('+'|'.join(MONTHS)+r')\s+(\d{1,2})(?:st|nd|rd|th)?\b', re.I)
 
@@ -20,7 +20,7 @@ DAY = re.compile(r'\b('+'|'.join(MONTHS)+r')\s+(\d{1,2})(?:st|nd|rd|th)?\b', re.
 def parse_date(text):
     match=DATE.search(text)
     if not match: return None
-    for fmt in ('%Y-%m-%d','%d/%m/%Y','%d-%m-%Y','%d-%b-%Y','%d %b %Y','%d-%B-%Y','%d %B %Y'):
+    for fmt in ('%Y-%m-%d','%d/%m/%Y','%d-%m-%Y','%d/%m/%y','%d-%m-%y','%d-%b-%Y','%d %b %Y','%d-%B-%Y','%d %B %Y'):
         try: return datetime.strptime(match.group(),fmt).date()
         except ValueError: pass
     return None
@@ -67,12 +67,13 @@ def header(row):
         elif t.startswith(('withdrawal','debit')) or t=='dr': role='debit'
         elif t.startswith(('deposit','credit')) or t=='cr': role='credit'
         elif t=='balance': role='balance'
-        elif t in ('description','narration','narrative','remarks','details','particulars','destination','category',
+        elif t in ('category','transactiontype'): role='source_type'
+        elif t in ('description','narration','narrative','remarks','details','particulars','destination','tofrom','to',
                    'recipient','beneficiary','counterparty','payee','beneficiaryname','recipientname'): role='description'
         elif t in ('trans','transaction','txn','posting') and n in ('date','time','details','detail','description','particulars','id','reference'):
             role='date' if n in ('date','time') else 'description' if n in ('details','detail','description','particulars') else 'ignore';span=2
         elif t in ('value','val') and n=='date': role='ignore';span=2
-        elif t in ('date','time'): role='date'
+        elif t in ('date','time','datetime'): role='date'
         elif t in ('ref','reference','channel','chq','cheque'): role='ignore'
         if role:
             cols.append((word['x0']-2,role));i+=span
@@ -137,6 +138,22 @@ def cells(row, cols):
     return values
 
 
+def align_balance_column(cols,words):
+    """Right-aligned money can start left of its centred Balance heading."""
+    positions=[i for i,(_,role) in enumerate(cols) if role=='balance']
+    if len(positions)!=1: return cols
+    i=positions[0]
+    if i!=len(cols)-1 or i==0:return cols
+    left=cols[i][0];previous=cols[i-1][0]
+    candidates=[]
+    for w in words:
+        if w['x0']<=previous or w.get('x1',w['x0'])<left:continue
+        if re.fullmatch(r'(?:₦|NGN)?[+-]?[\d,]+\.\d{2}',w['text']): candidates.append(w['x0']-1)
+    if candidates:
+        cols=list(cols);cols[i]=(min(left,min(candidates)),'balance')
+    return cols
+
+
 def document_context(reader):
     """Carry period and date headings into chunks without copying personal details."""
     texts=[page.extract_text() or '' for page in reader.pages]
@@ -179,6 +196,7 @@ def table_hint(content):
             for index,row in enumerate(rows):
                 cols,span=header_rows(rows,index)
                 if cols:
+                    cols=align_balance_column(cols,page.extract_words())
                     ranges=[]
                     for i,(left,role) in enumerate(cols):
                         right=cols[i+1][0] if i+1<len(cols) else page.width
@@ -335,6 +353,7 @@ def read_labelled_pdf(content, reader):
             width=page.width
             words=page.extract_words()
             if not words: return None # scanned/mixed pages require the AI reader
+            if cols:cols=align_balance_column(cols,words)
             page_rows=lines(words)
             if not seen_header:
                 # Summaries above the first transaction header only.
@@ -350,7 +369,7 @@ def read_labelled_pdf(content, reader):
                     # Pre-row narration attachment requires the visual fallback.
                     if {'channel','reference','value'}.issubset({token(w['text']) for w in heading_words}):
                         return read_wallet_columns(content,reader)
-                    cols=found;seen_header=True
+                    cols=align_balance_column(found,words);seen_header=True
                     skip_until=index+span
                     match=DAY.search(text)
                     if match: current_day=resolve_day(match,period)
@@ -400,3 +419,68 @@ def read_labelled_pdf(content, reader):
     if len(result['transactions'])<2: return None
     if any(key not in result for key in ('opening_balance','closing_balance')): return None
     return result
+
+
+def read_account_sections(content,reader):
+    """Keep explicitly summarised account/pocket ledgers separate.
+
+    No merchant inference or account-name matching is used to split ledgers.
+    Each section must independently reconcile before the caller accepts any row.
+    """
+    import pdfplumber
+    sections=[];section=None;cols=None;pending=None;waiting=None
+    def flush():
+        nonlocal pending
+        if pending:
+            if not pending['description'].strip(): raise ValueError('Missing transaction narration')
+            section['transactions'].append(pending);pending=None
+    with pdfplumber.open(BytesIO(content)) as pdf:
+        for page in pdf.pages:
+            rows=lines(page.extract_words())
+            if not rows: return None
+            if cols: cols=align_balance_column(cols,page.extract_words())
+            skip=0
+            for i,row in enumerate(rows):
+                if i<skip: continue
+                text=' '.join(w['text'] for w in row)
+                words=[token(w['text']) for w in row]
+                # Account summary has all four printed labels on one line.
+                if words.count('money')==2 and 'in' in words and 'out' in words and 'opening' in words and 'closing' in words:
+                    flush()
+                    end=next((j for j in range(i+1,min(i+5,len(rows))) if header_rows(rows,j)[0]),min(i+4,len(rows)))
+                    waiting=printed_summary(rows[i:end])
+                    waiting['source_heading']=' '.join(w['text'] for w in rows[i-1]) if i else ''
+                    if not all(k in waiting for k in ('opening_balance','closing_balance','total_debits','total_credits')): return None
+                    cols=None
+                    continue
+                found,span=header_rows(rows,i)
+                if found:
+                    if waiting:
+                        heading=waiting.pop('source_heading','')
+                        role='spend' if re.fullmatch(r'Spend(?:ing)? Account',heading,re.I) else 'savings' if sections and sections[0].get('account_role')=='spend' and not any(r=='source_type' for _,r in found) else 'unknown'
+                        section=dict(waiting,complete=True,currency='NGN',transactions=[],section_index=len(sections),account_role=role)
+                        sections.append(section);waiting=None
+                    if section is None: return None
+                    cols=align_balance_column(found,page.extract_words());skip=i+span;continue
+                if cols is None: continue
+                if re.match(r'^(?:Kuda MF Bank|Account Number\s*:|Page \d+|Statement$|All rights|is licensed)',text,re.I): continue
+                values=cells(row,cols);date_cell=values.get('date','')
+                day=parse_date(date_cell)
+                if not day and row[0]['top']>page.height-80 and re.search(r'Kuda|NDIC|Yaba, Lagos|Finsbury|licensed|trademarks|rights reserved',text,re.I):continue
+                if day:
+                    debit=amount(values.get('debit',''));credit=amount(values.get('credit',''))
+                    if (debit>0)==(credit>0) or debit<0 or credit<0 or not values.get('balance'): return None
+                    flush()
+                    pending={'date':day.isoformat(),'amount':str(debit or credit),
+                             'direction':'debit' if debit else 'credit','balance':str(amount(values['balance'])),
+                             'description':values.get('description',''),'source_type':values.get('source_type',''),'confidence':1.}
+                elif pending:
+                    # A printed time on its own is the second line of Date/Time.
+                    if date_cell and not TIME.fullmatch(date_cell):
+                        if DATE.search(date_cell): return None
+                    if any(re.search(r'\d[,.]\d{2}',values.get(k,'')) for k in ('debit','credit','balance')): return None
+                    if values.get('description'): pending['description']+=' '+values['description']
+                    if values.get('source_type'): pending['source_type']+=' '+values['source_type']
+        flush()
+    if waiting or not sections or any(not s['transactions'] for s in sections): return None
+    return sections

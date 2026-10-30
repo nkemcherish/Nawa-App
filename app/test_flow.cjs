@@ -31,6 +31,7 @@ if(restored[0].transactions.length!==demo.length||stats(restored[0].transactions
 const fullNarration='reference '.repeat(40)+'Recipient / dinner catering';const longBackup=validateBackup({format:'nawa-backup',version:1,reports:[{transactions:[{...demo[0],description:fullNarration}]}]});if(longBackup[0].transactions[0].description!==fullNarration)throw Error('Backup must preserve full recipient/narration text');
 let rejected=false;try{validateBackup({format:'nawa-backup',version:1,reports:[{transactions:[{...demo[0],amount:'oops'}]}]})}catch{rejected=true}if(!rejected)throw Error('Invalid backup accepted');
 if(!settings().includes('Appearance')||!settings().includes('Restore report backup'))throw Error('Missing preferences and backup controls');
+const ownFlows=[{amount:200,type:'transfer',direction:'debit'},{amount:200,type:'transfer',direction:'credit'}];if(stats(ownFlows).transfer!==200||stats(ownFlows).spend!==0||stats(ownFlows).income!==0)throw Error('Internal account credits must not count twice or become income/spending');
 state.isDemo=false;state.warnings=['Individual running balances are not verified.'];if(!report().includes('role="status"')||!report().includes('Statement checks and warnings'))throw Error('Statement reconciliation warning must be visible');
 `,context);
 console.log('Review grouping, debit totals, own-account exclusions, report and navigation checks passed');

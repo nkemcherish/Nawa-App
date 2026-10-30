@@ -12,13 +12,41 @@ from urllib.error import HTTPError
 CATEGORIES = ['Food & drinks', 'Transport', 'Bills & utilities', 'Housing', 'Shopping',
               'Subscriptions', 'Health', 'Family support', 'Other spending']
 
+
+def explicit_purpose(description):
+    """Shared source-evidence rules before the probabilistic classifier.
+
+    Prefer explicit purchase notes to bank routing terms. No personal names,
+    account numbers or statement-specific recipient lists are hardcoded.
+    """
+    text=description.casefold()
+    rules=[
+        ('Other spending',r'\b(?:co[-\s]*working|workspace|workstation|meeting\s+room)\b'),
+        ('Food & drinks',r'\b(?:food|meals?|breakfast|lunch|dinner|grocer(?:y|ies)|supermarkets?|restaurants?|eater(?:y|ies)|caf[eé]|coffee|pastr(?:y|ies)|ice\s*cream|pop\s*corn|shawarma|fura|nunu|suya|amala|jollof|pizza|baker(?:y|ies)|catering|chicken(?:\s*republic)?|shoprite)\b'),
+        ('Transport',r'\b(?:uber|bolt|fuel|petrol|diesel|transport|bus\s+fare|taxi|ride)\b'),
+        ('Bills & utilities',r'\b(?:electric(?:ity)?|power|airtime|data\s+bundle|dstv|internet)\b'),
+        ('Subscriptions',r'\b(?:netflix|spotify|subscriptions?)\b'),
+        ('Shopping',r'\b(?:shopping|jumia|amazon|skincare|cosmetics?)\b'),
+        ('Housing',r'\b(?:rent|landlord)\b'),
+        ('Health',r'\b(?:pharmacy|hospital|clinic|medicin(?:e|es)|medical)\b'),
+        ('Other spending',r'\b(?:vat\s+charge|stamp\s+duty|transfer\s+fee|bank\s+charges?|card\s+issuance)\b'),
+    ]
+    for category,pattern in rules:
+        match=re.search(pattern,text)
+        if match:return category,description[match.start():match.end()]
+    return None,None
+
 def categorise(transactions):
     key = os.environ.get('GEMINI_API_KEY')
     if not key:
         return ['Gemini is not configured. Unclear payments need your review.']
     groups = {}
     for t in transactions:
-        if t['type'] in ('income', 'refund') or not t.get('review') or t.get('aiCategoryAttempted'):
+        if t.get('internalTransfer') or t['type'] in ('income','refund'): continue
+        category,evidence=explicit_purpose(t['description'])
+        if category and t.get('review'):
+            t.update(type='expense',category=category,review=False,classifiedBy='narration',categoryEvidence=evidence)
+        if not t.get('review') or t.get('aiCategoryAttempted'):
             continue
         merchant = re.sub(r'\b\d+\b', '', t['description']).strip().lower()
         groups.setdefault(merchant, []).append(t)

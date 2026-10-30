@@ -6,7 +6,7 @@ import json, re, csv, os
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from urllib.parse import urlparse
-from categorise import categorise
+from categorise import categorise, explicit_purpose
 
 ROOT=Path(__file__).resolve().parent
 MAX_FILE=12*1024*1024
@@ -35,9 +35,8 @@ def transaction(date,description,amount,direction,idx):
     cat='Uncategorised'
     if direction=='debit':
         typ='transfer' if any(w in lower for w in ('transfer','trf','sent to','nibss')) else 'expense'
-        rules=[('Food & drinks',('restaurant','chicken','food','grocery','supermarket','shoprite','eatery','fura','nunu','suya','amala','jollof','shawarma','bakery','pizza')),('Transport',('uber','bolt','fuel','transport','ride')),('Bills & utilities',('electric','power','airtime','data bundle','dstv','internet')),('Subscriptions',('netflix','spotify','subscription')),('Shopping',('shopping','jumia','amazon')),('Housing',('rent','landlord'))]
-        for category,words in rules:
-            if any(re.search(r'\b'+re.escape(w)+r'\b',lower) for w in words): cat=category;typ='expense';break
+        purpose,evidence=explicit_purpose(desc)
+        if purpose:cat=purpose;typ='expense'
         if typ=='transfer':cat='Transfers'
     elif direction=='credit':cat='Money received'
     return {'id':f'imp-{idx}','date':date,'description':desc,'amount':round(abs(amount),2),'type':typ,'category':cat,'review':cat=='Uncategorised' or typ=='transfer'}
@@ -125,8 +124,16 @@ def parse_pdf(content):
             d,desc,amount,direction=row[:4]
             item=transaction(d,desc,amount,direction,i)
             item['aiCategoryAttempted']=row[4].get('category_attempted',True) if len(row)>4 else True
+            item['direction']=direction
+            if len(row)>4 and row[4].get('internal_transfer'):
+                item.update(type='transfer',category='Transfers',review=False,internalTransfer=True)
+            if len(row)>4 and row[4].get('source_type'):item['sourceType']=row[4]['source_type']
+            if direction=='debit' and not item.get('internalTransfer') and item.get('review'):
+                source_type=item.get('sourceType','').strip().lower()
+                purpose={'airtime':'Bills & utilities','bills':'Bills & utilities','card issuance':'Other spending'}.get(source_type)
+                if purpose:item.update(type='expense',category=purpose,review=False,classifiedBy='statement-type')
             category=row[4].get('category') if len(row)>4 else None
-            if direction=='debit' and category:
+            if direction=='debit' and category and not item.get('internalTransfer'):
                 item.update(type='expense',category=category,review=False,classifiedBy='gemini')
             tx.append(item)
         return tx,warnings

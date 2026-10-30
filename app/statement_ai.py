@@ -12,7 +12,7 @@ from decimal import Decimal, InvalidOperation
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from categorise import CATEGORIES
-from statement_layout import document_context, context_hint, table_hint, source_summary, read_labelled_pdf
+from statement_layout import document_context, context_hint, table_hint, source_summary, read_labelled_pdf, read_account_sections
 
 def validate_rows(result):
     if not isinstance(result, dict) or result.get('complete') is not True:
@@ -187,6 +187,27 @@ def read_pdf_report(content, _recovery=None):
     except Exception:
         raise ValueError('This PDF is damaged or could not be opened. Download a fresh copy from your bank.') from None
     if not _recovery:
+        try:
+            sections=read_account_sections(content,reader)
+            if sections and len(sections)>1:
+                combined=[];running_warning=False
+                for section in sections:
+                    try: rows,checks=reconcile(section)
+                    except RunningBalanceMismatch:
+                        # Directly read full sections must still match all four
+                        # source summaries. Never enable this for AI responses.
+                        if not all(k in section for k in ('opening_balance','closing_balance','total_debits','total_credits')): raise
+                        rows,checks=reconcile(section,require_running=False);running_warning=True
+                    for row,raw in zip(rows,section['transactions']):
+                        kind=raw.get('source_type','')
+                        internal=section.get('account_role')=='savings' or bool(re.search(r'\b(?:plain\s+)?savings\b|spend\s*(?:and|\+)\s*save',kind,re.I))
+                        combined.append((*row,{'category':None,'category_attempted':False,'source_type':kind,
+                                              'internal_transfer':internal,'account_section':section['section_index']}))
+                warnings=[f'Read all {count} pages as {len(sections)} separate account sections. Printed debit/credit totals and opening/closing balances match within each section. Savings movements are kept out of spending categories.']
+                if running_warning: warnings.append('Individual running balances do not all follow transaction order; they are not verified. Account-section totals and opening/closing balances match. Review the original statement.')
+                return combined,warnings
+        except Exception:
+            pass # Unsupported or inconsistent sections must still use full fallback.
         try:
             local=read_labelled_pdf(content,reader)
             if local:

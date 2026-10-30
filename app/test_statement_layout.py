@@ -216,6 +216,44 @@ class LayoutTests(unittest.TestCase):
                     read_pdf_report(self.wallet_fixture(**kwargs))
                 ai.assert_called_once()
 
+    def sectioned_fixture(self,bad_summary=False):
+        out=BytesIO();c=Canvas(out,pagesize=(650,842))
+        def section(title,values,records,category):
+            c.setFont('Helvetica',8);c.drawString(20,820,'Fictional NGN account statement')
+            c.drawString(20,790,title)
+            for x,label,value in zip([20,160,300,440],['Money In','Money Out','Opening Balance','Closing Balance'],values):
+                c.drawString(x,760,label);c.drawString(x,740,value)
+            columns=[(14,'Date/Time'),(100,'Money In'),(180,'Money Out')]
+            if category:columns.append((260,'Category'))
+            columns.extend([(330,'To/From' if category else 'To'),(430,'Description'),(550,'Balance')])
+            for x,label in columns:c.drawString(x,700,label)
+            for n,(credit,debit,balance,kind,note) in enumerate(records):
+                y=660-n*35
+                data={'Date/Time':'01/10/26','Money In':credit,'Money Out':debit,'Balance':balance,
+                      'Category':kind,'To/From':'Fictional vendor','To':'Spend Account','Description':note}
+                for x,label in columns:c.drawString(x,y,data[label])
+        section('Spend Account',['0.00','300.00','1,000.00','700.00' if not bad_summary else '701.00'],
+                [('--','100.00','900.00','outward transfer','groceries'),('--','200.00','700.00','savings','food withdrawal')],True)
+        c.showPage()
+        section('Food savings pocket',['200.00','0.00','0.00','200.00'],[('200.00','--','200.00','','food')],False)
+        c.save();return out.getvalue()
+
+    def test_sections_preserve_food_purchases_and_exclude_savings_movements(self):
+        from server import parse_pdf
+        import os
+        with patch.dict(os.environ,{'GEMINI_API_KEY':'not-used'}),patch('statement_ai.read_chunk') as ai:
+            tx,warnings=parse_pdf(self.sectioned_fixture())
+        ai.assert_not_called()
+        self.assertEqual(len(tx),3)
+        self.assertEqual(tx[0]['category'],'Food & drinks')
+        self.assertTrue(all(t['internalTransfer'] and t['type']=='transfer' for t in tx[1:]))
+        self.assertEqual(tx[2]['direction'],'credit')
+        self.assertIn('2 separate account sections',warnings[0])
+
+    def test_bad_account_section_never_returns_partial_report(self):
+        with patch('statement_ai.read_chunk',side_effect=ValueError('fallback')):
+            with self.assertRaises(ValueError):read_pdf_report(self.sectioned_fixture(bad_summary=True))
+
     def test_missing_dates_are_not_guessed(self):
         content=fixture(grouped=True).replace(b'01/09/2026',b'xx/xx/xxxx')
         # Reportlab compresses streams, so use a reader stub with missing metadata.
