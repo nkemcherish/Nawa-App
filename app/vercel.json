@@ -6,7 +6,7 @@
   "functions": {
     "api/parse.py": {
       "maxDuration": 300,
-      "includeFiles": "{server.py,categorise.py,statement_ai.py,statement_layout.py}"
+      "includeFiles": "{server.py,categorise.py,statement_ai.py,statement_layout.py,processing_budget.py}"
     }
   },
   "headers": [

@@ -1,0 +1,26 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const context={localStorage:{getItem:()=>null,setItem:()=>{}},document:{querySelector:()=>({innerHTML:''})},window:{scrollTo:()=>{}},console,assert};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(__dirname+'/app.js','utf8'),context);
+vm.runInContext(`(async()=>{
+ const signal={aborted:false};let calls=0;
+ const response=(status,body)=>({status,ok:status>=200&&status<300,text:async()=>body});
+ const success=JSON.stringify({transactions:[{description:'Fictional grocery'}],warnings:[]});
+ fetch=async()=>{calls++;return calls===1?response(500,'An error occurred FUNCTION_INVOCATION_FAILED'):response(200,success)};
+ assert.equal((await requestStatement({name:'fictional.pdf'},signal)).transactions.length,1);assert.equal(calls,2);
+ calls=0;fetch=async()=>{calls++;return response(422,JSON.stringify({error:'Printed totals do not match.'}))};
+ await assert.rejects(()=>requestStatement({name:'fictional.pdf'},signal),/Printed totals/);assert.equal(calls,1);
+ calls=0;fetch=async()=>{calls++;return response(504,'FUNCTION_INVOCATION_TIMEOUT')};
+ await assert.rejects(()=>requestStatement({name:'fictional.pdf'},signal),/processing time/);assert.equal(calls,1);
+ calls=0;fetch=async()=>{calls++;return response(500,'An error occurred')};
+ await assert.rejects(()=>requestStatement({name:'fictional.pdf'},signal),error=>!(error instanceof SyntaxError)&&/reader stopped/.test(error.message));assert.equal(calls,2);
+ await assert.rejects(()=>readStatementResponse(response(413,'Request too large')),/file-size/);
+ await assert.rejects(()=>readStatementResponse(response(200,'<html>Platform error</html>')),/reader stopped/);
+ calls=0;fetch=async()=>{calls++;throw new TypeError('Network failure')};
+ await assert.rejects(()=>requestStatement({name:'fictional.pdf'},signal),/connection/);assert.equal(calls,2);
+ calls=0;fetch=async()=>{calls++;const e=Error('Cancelled');e.name='AbortError';throw e};
+ await assert.rejects(()=>requestStatement({name:'fictional.pdf'},signal),/Cancelled/);assert.equal(calls,1);
+ let headers;fetch=async(_,options)=>{headers=options.headers;return response(200,success)};
+ await requestStatement({name:'fictional-₦.pdf'},signal);assert.equal(headers['X-File-Name'],'fictional-%E2%82%A6.pdf');
+ console.log('Upload recovery, non-JSON errors, cancellation and filename encoding checks passed');
+})()`,context).catch(error=>{console.error(error);process.exitCode=1});

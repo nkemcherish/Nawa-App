@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from categorise import CATEGORIES
 from statement_layout import document_context, context_hint, table_hint, source_summary, read_labelled_pdf, read_account_sections
+from processing_budget import check_budget, io_timeout, ProcessingTimeout
 
 def validate_rows(result):
     if not isinstance(result, dict) or result.get('complete') is not True:
@@ -88,7 +89,7 @@ def read_chunk_once(content, feedback=None):
     request = Request(f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',
         data=json.dumps(body).encode(), headers={'Content-Type':'application/json','x-goog-api-key':key}, method='POST')
     try:
-        with urlopen(request, timeout=100) as response: payload = json.load(response)
+        with urlopen(request, timeout=io_timeout(100)) as response: payload = json.load(response)
         candidate = payload['candidates'][0]
         if candidate.get('finishReason') != 'STOP': raise ValueError('AI could not finish reading this statement. Try a shorter statement or CSV.')
         result = json.loads(''.join(p.get('text','') for p in candidate['content']['parts']))
@@ -102,7 +103,9 @@ def read_chunk_once(content, feedback=None):
 def read_chunk(content, feedback=None):
     for attempt in range(3):
         try:
+            check_budget()
             return read_chunk_once(content, feedback=feedback) if feedback else read_chunk_once(content)
+        except ProcessingTimeout: raise
         except HTTPError as error:
             if attempt==2:
                 message='AI is busy or its usage limit has been reached.' if error.code==429 else 'The AI service is temporarily unavailable.'
@@ -176,6 +179,7 @@ def reconcile(result, *, require_running=True):
     return rows,checks
 
 def read_pdf_report(content, _recovery=None):
+    check_budget()
     try:
         reader=PdfReader(BytesIO(content),strict=False)
         if reader.is_encrypted and not reader.decrypt(''):
@@ -206,6 +210,7 @@ def read_pdf_report(content, _recovery=None):
                 warnings=[f'Read all {count} pages as {len(sections)} separate account sections. Printed debit/credit totals and opening/closing balances match within each section. Savings movements are kept out of spending categories.']
                 if running_warning: warnings.append('Individual running balances do not all follow transaction order; they are not verified. Account-section totals and opening/closing balances match. Review the original statement.')
                 return combined,warnings
+        except ProcessingTimeout: raise
         except Exception:
             pass # Unsupported or inconsistent sections must still use full fallback.
         try:
@@ -228,6 +233,7 @@ def read_pdf_report(content, _recovery=None):
                 return [(*row,{'category':None,'category_attempted':False}) for row in rows], warnings+[
                     'Read all '+str(count)+' pages from labelled PDF columns. Matched '+', '.join(checks)+
                     '. Compare the report with your original statement.']
+        except ProcessingTimeout: raise
         except Exception:
             # A rejected deterministic extraction is never a partial report.
             # PDF text engines can reject files the visual reader can still read.
@@ -243,6 +249,7 @@ def read_pdf_report(content, _recovery=None):
     # Read bounded groups so long statements cannot silently truncate a single response.
     all_rows=[];all_raw=[];checks=[];chunk_results={};row_chunks=[]
     for start in range(0,count,4):
+        check_budget()
         writer=PdfWriter()
         for page in reader.pages[start:start+4]: writer.add_page(page)
         buffer=BytesIO();writer.write(buffer)

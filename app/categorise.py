@@ -8,6 +8,7 @@ import os
 import re
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
+from processing_budget import check_budget,io_timeout,ProcessingTimeout
 
 CATEGORIES = ['Food & drinks', 'Transport', 'Bills & utilities', 'Housing', 'Shopping',
               'Subscriptions', 'Health', 'Family support', 'Other spending']
@@ -58,6 +59,10 @@ def categorise(transactions):
         return ['Gemini model configuration is invalid. Please review unclear payments.']
     warnings=[]
     for start in range(0,len(all_names),100):
+        try: check_budget(reserve=12)
+        except ProcessingTimeout:
+            warnings.append('Your transactions were read. Some categories still need review because processing time was nearly exhausted.')
+            break
         names=all_names[start:start+100]
         warning=_classify_batch(names,groups,key,model)
         if warning:
@@ -83,7 +88,7 @@ def _classify_batch(names,groups,key,model):
                          'generationConfig': {'responseMimeType': 'application/json', 'temperature': 0}}).encode(),
         headers={'Content-Type': 'application/json', 'x-goog-api-key': key}, method='POST')
     try:
-        with urlopen(request, timeout=25) as response:
+        with urlopen(request, timeout=io_timeout(25)) as response:
             data = json.load(response)
         result = json.loads(data['candidates'][0]['content']['parts'][0]['text'])
         decisions = {}

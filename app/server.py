@@ -18,12 +18,15 @@ def money(s):
     if not s or s in ('-','—'): return None
     s=re.sub(r'\s+', '',s)
     if s.startswith('(') and s.endswith(')'): s='-'+s[1:-1]
-    try:return float(Decimal(s))
+    try:
+        number=Decimal(s)
+        if not number.is_finite() or abs(number)>Decimal('1000000000000'):return None
+        return float(number)
     except (InvalidOperation,ValueError):return None
 
 def date_normal(s):
     s=str(s).strip()
-    for fmt in ('%d/%m/%Y','%d-%m-%Y','%Y-%m-%d','%d/%m/%y','%d-%m-%y','%m/%d/%Y','%m-%d-%Y'):
+    for fmt in ('%d/%m/%Y','%d-%m-%Y','%Y-%m-%d','%d/%m/%y','%d-%m-%y','%m/%d/%Y','%m-%d-%Y','%d %b %Y','%d-%b-%Y','%d %B %Y'):
         try:return datetime.strptime(s,fmt).strftime('%Y-%m-%d')
         except ValueError: pass
     return None
@@ -50,7 +53,7 @@ def parse_csv(content):
         for name in names:
             if name in fields:return fields[name]
         return None
-    dc=col('date','transactiondate','valuedate','posteddate'); ds=col('description','narration','details','remarks','transactiondetails'); debit=col('debit','withdrawal','withdrawals','dr');credit=col('credit','deposit','deposits','cr');amt=col('amount','transactionamount')
+    dc=col('date','transactiondate','valuedate','posteddate'); ds=col('description','narration','details','remarks','transactiondetails'); debit=col('debit','withdrawal','withdrawals','dr','moneyout');credit=col('credit','deposit','deposits','cr','moneyin');amt=col('amount','transactionamount');direction_col=col('direction','type','transactiontype','drcr')
     if not dc or not ds or not ((debit or credit) or amt):raise ValueError('The CSV needs date, description, and debit/credit or amount columns.')
     tx=[];skipped=0
     for i,row in enumerate(reader):
@@ -60,7 +63,14 @@ def parse_csv(content):
         if (deb or 0)>0:tx.append(transaction(d,desc,deb,'debit',i));continue
         if (cred or 0)>0:tx.append(transaction(d,desc,cred,'credit',i));continue
         a=money(row.get(amt)) if amt else None
-        if a is not None and a!=0:tx.append(transaction(d,desc,a,'credit' if a>0 else 'debit',i))
+        if a is not None and a!=0:
+            direction='credit' if a>0 else 'debit'
+            if direction_col:
+                raw_direction=re.sub(r'[^a-z]','',(row.get(direction_col) or '').lower())
+                if raw_direction in ('debit','dr','withdrawal','out','moneyout'):direction='debit'
+                elif raw_direction in ('credit','cr','deposit','in','moneyin'):direction='credit'
+                else:skipped+=1;continue
+            tx.append(transaction(d,desc,a,direction,i))
         else:skipped+=1
     return tx,[f'{skipped} rows were skipped because they could not be parsed.'] if skipped else []
 

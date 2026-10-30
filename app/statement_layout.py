@@ -7,6 +7,7 @@ import re
 from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
+from processing_budget import check_budget
 
 
 MONTHS = {name.lower(): i for i, name in enumerate(
@@ -156,7 +157,9 @@ def align_balance_column(cols,words):
 
 def document_context(reader):
     """Carry period and date headings into chunks without copying personal details."""
-    texts=[page.extract_text() or '' for page in reader.pages]
+    texts=[]
+    for page in reader.pages:
+        check_budget();texts.append(page.extract_text() or '')
     first=texts[0] if texts else ''
     # The first two explicit dates on a period line, never transaction dates.
     period=[]
@@ -192,6 +195,7 @@ def table_hint(content):
     import pdfplumber
     with pdfplumber.open(BytesIO(content)) as pdf:
         for page in pdf.pages:
+            check_budget()
             rows=lines(page.extract_words())
             for index,row in enumerate(rows):
                 cols,span=header_rows(rows,index)
@@ -273,6 +277,7 @@ def read_wallet_columns(content, reader):
     debit_count=credit_count=0;previous_cols=None;previous_width=None
     with pdfplumber.open(BytesIO(content)) as pdf:
         for page_no,page in enumerate(pdf.pages):
+            check_budget()
             words=page.extract_words();rows=lines(words)
             if not words: return None
             text=' '.join(w['text'] for w in words)
@@ -327,6 +332,7 @@ def read_wallet_columns(content, reader):
                 transaction['description']=' '.join(w['text'] for row in lines(bucket) for w in row)
                 if not transaction['description']: return None
                 result['transactions'].append(transaction)
+            page.close()
     if debit_count!=result['debit_count'] or credit_count!=result['credit_count']: return None
     result['transaction_count']=debit_count+credit_count
     result['source_reader']='wallet_columns'
@@ -349,6 +355,7 @@ def read_labelled_pdf(content, reader):
     with pdfplumber.open(BytesIO(content)) as pdf:
         width=None
         for page in pdf.pages:
+            check_budget()
             if width is not None and abs(width-page.width)>1: return None
             width=page.width
             words=page.extract_words()
@@ -413,6 +420,7 @@ def read_labelled_pdf(content, reader):
                         if re.search(r'\d[,.]\d{2}',cell): return None
                     if values.get('description'):
                         pending['description']+=' '+values['description']
+            page.close()
         if pending: result['transactions'].append(pending)
     if not result['transactions'] or any(not r['description'].strip() or r['balance'] is None for r in result['transactions']): return None
     # Avoid treating a lone row or an unanchored partial table as a verified read.
@@ -436,6 +444,7 @@ def read_account_sections(content,reader):
             section['transactions'].append(pending);pending=None
     with pdfplumber.open(BytesIO(content)) as pdf:
         for page in pdf.pages:
+            check_budget()
             rows=lines(page.extract_words())
             if not rows: return None
             if cols: cols=align_balance_column(cols,page.extract_words())
@@ -481,6 +490,7 @@ def read_account_sections(content,reader):
                     if any(re.search(r'\d[,.]\d{2}',values.get(k,'')) for k in ('debit','credit','balance')): return None
                     if values.get('description'): pending['description']+=' '+values['description']
                     if values.get('source_type'): pending['source_type']+=' '+values['source_type']
+            page.close()
         flush()
     if waiting or not sections or any(not s['transactions'] for s in sections): return None
     return sections

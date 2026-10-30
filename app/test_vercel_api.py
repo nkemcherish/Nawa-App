@@ -32,4 +32,10 @@ class VercelTests(unittest.TestCase):
             code,data=self.request()
             self.assertEqual(code,422);self.assertEqual(data['error'],'This PDF is locked.')
 
+    def test_processing_deadline_returns_json_error(self):
+        with patch.dict(api.os.environ,{'GEMINI_API_KEY':'fake'},clear=True),patch.object(api,'parse_pdf',side_effect=api.ProcessingTimeout('Time budget exceeded.')):
+            code,data=self.request()
+        self.assertEqual(code,408)
+        self.assertEqual(data['code'],'processing_timeout')
+
 if __name__=='__main__':unittest.main()
