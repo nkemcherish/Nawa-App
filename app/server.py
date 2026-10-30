@@ -42,7 +42,7 @@ def transaction(date,description,amount,direction,idx):
         if purpose:cat=purpose;typ='expense'
         if typ=='transfer':cat='Transfers'
     elif direction=='credit':cat='Money received'
-    return {'id':f'imp-{idx}','date':date,'description':desc,'amount':round(abs(amount),2),'type':typ,'category':cat,'review':cat=='Uncategorised' or typ=='transfer'}
+    return {'id':f'imp-{idx}','date':date,'description':desc,'amount':round(abs(amount),2),'direction':direction,'type':typ,'category':cat,'review':cat=='Uncategorised' or typ=='transfer'}
 
 def parse_csv(content):
     text=content.decode('utf-8-sig',errors='replace')

@@ -9,6 +9,7 @@ import re
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from processing_budget import check_budget,io_timeout,ProcessingTimeout
+from recipient_logic import prepare_recipients,group_repeated_recipients
 
 CATEGORIES = ['Food & drinks', 'Transport', 'Bills & utilities', 'Housing', 'Shopping',
               'Subscriptions', 'Health', 'Family support', 'Other spending']
@@ -38,6 +39,13 @@ def explicit_purpose(description):
     return None,None
 
 def categorise(transactions):
+    prepare_recipients(transactions)
+    warnings=_categorise_purposes(transactions)
+    group_repeated_recipients(transactions)
+    return warnings
+
+
+def _categorise_purposes(transactions):
     key = os.environ.get('GEMINI_API_KEY')
     if not key:
         return ['Gemini is not configured. Unclear payments need your review.']
