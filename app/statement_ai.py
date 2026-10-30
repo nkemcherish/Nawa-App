@@ -12,6 +12,7 @@ from decimal import Decimal, InvalidOperation
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from categorise import CATEGORIES
+from statement_layout import document_context, context_hint, table_hint, source_summary, read_labelled_pdf
 
 def validate_rows(result):
     if not isinstance(result, dict) or result.get('complete') is not True:
@@ -32,13 +33,14 @@ def validate_rows(result):
             direction = row['direction']
             description = row['description']
             if direction not in ('debit', 'credit') or not isinstance(description, str) or not description.strip(): raise ValueError()
-            if row.get('confidence', 0) < .9: raise ValueError()
+            confidence=row.get('confidence',0)
+            if type(confidence) not in (int,float) or not .9<=confidence<=1: raise ValueError()
         except (KeyError, ValueError, TypeError, InvalidOperation):
             raise ValueError('Some transaction dates or amounts could not be read confidently. Try a clearer statement or CSV.') from None
         clean.append((day, description.strip()[:240], float(amount), direction))
     return clean
 
-def read_chunk_once(content):
+def read_chunk_once(content, feedback=None):
     key = os.environ.get('GEMINI_API_KEY')
     if not key: raise ValueError('AI statement reading is not configured on this server.')
     model = os.environ.get('GEMINI_MODEL', 'gemini-3.1-flash-lite')
@@ -61,9 +63,23 @@ def read_chunk_once(content):
         'otherwise use null. Include balance on each transaction if printed, else null. Never calculate these fields. '
         'Handle borderless tables, reversed column order, wrapped narrations, multiple transactions per date, decimal commas, '
         'DR/CR suffixes, negative amounts, and descending date order. Normalise direction and positive decimal amount. '
+        'Money In / Deposit / CR are credit; Money Out / Withdrawal / DR are debit. Use column headers, not column order. '
+        'Some Kuda layouts group rows under a day heading and print only times on transaction rows; carry the last '
+        'printed day across page breaks. Never use the transaction time as the date or invent a missing year. '
+        'Keep separate account and savings-pocket sections separate: if they cannot be represented as one continuous '
+        'account history, mark complete false rather than joining their running balances. '
+        'Preserve transfer fees, VAT, stamp duty, reversals and other actual ledger rows. Do not count a fee twice '
+        'when the debit already includes it. Available balance is not automatically the ledger running balance. '
+        'A totals row may include an opening-balance carry-forward: only return total_debits/total_credits if explicitly '
+        'period transaction totals, excluding brought-forward balances. '
         'Only NGN statements are currently supported; identify other currencies without conversion. '
         'Amounts must be positive, with at most two decimals. complete must be false if ANY transaction is unreadable, '
         'missing, ambiguous or truncated. Do not calculate totals. Do not output account holder details separately.')
+    if feedback:
+        prompt += (' Source context and validation guidance: '+feedback+
+                   ' Re-read these original pages carefully. Check row order, page continuations, missing rows, '
+                   'debit/credit columns and running balances. Transcribe only the source; never adjust amounts '
+                   'or omit printed balances to make validation pass.')
     body = {'contents':[{'parts':[{'text':prompt},{'inlineData':{'mimeType':'application/pdf','data':base64.b64encode(content).decode()}}]}],
             'generationConfig':{'responseMimeType':'application/json','temperature':0,'maxOutputTokens':65536}}
     request = Request(f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',
@@ -80,10 +96,10 @@ def read_chunk_once(content):
         if error.code in (408,429,500,502,503,504): raise
         raise ValueError(f'AI statement reading is unavailable (service code {error.code}). Your file has not been marked unreadable.') from None
 
-def read_chunk(content):
+def read_chunk(content, feedback=None):
     for attempt in range(3):
         try:
-            return read_chunk_once(content)
+            return read_chunk_once(content, feedback=feedback) if feedback else read_chunk_once(content)
         except HTTPError as error:
             if attempt==2:
                 message='AI is busy or its usage limit has been reached.' if error.code==429 else 'The AI service is temporarily unavailable.'
@@ -110,7 +126,7 @@ def decimal_field(value):
 def reconcile(result):
     rows=validate_rows(result)
     currency=result.get('currency')
-    if currency and currency.upper() not in ('NGN','NGR','NAIRA'):
+    if currency is not None and (not isinstance(currency,str) or currency.strip().upper() not in ('NGN','NGR','NAIRA')):
         raise ValueError('This statement uses a different currency. NAWA currently supports Nigerian naira; no currency conversion was applied.')
     debits=sum((Decimal(str(r[2])) for r in rows if r[3]=='debit'),Decimal(0))
     credits=sum((Decimal(str(r[2])) for r in rows if r[3]=='credit'),Decimal(0))
@@ -131,20 +147,23 @@ def reconcile(result):
     # Verify consecutive running balances in either source ordering. Preserve duplicates.
     pairs=list(zip(result['transactions'],rows))
     def chain_ok(sequence):
-        tested=0
-        for (previous,_),(current,parsed) in zip(sequence,sequence[1:]):
-            before=decimal_field(previous.get('balance'));after=decimal_field(current.get('balance'))
-            if before is None or after is None: continue
-            tested+=1
-            change=Decimal(str(parsed[2]))*(1 if parsed[3]=='credit' else -1)
-            if abs(before+change-after)>Decimal('.01'): return False,tested
+        tested=0;anchor=None;change=Decimal(0)
+        for current,parsed in sequence:
+            after=decimal_field(current.get('balance'))
+            if anchor is not None:
+                change+=Decimal(str(parsed[2]))*(1 if parsed[3]=='credit' else -1)
+                if after is not None:
+                    tested+=1
+                    if abs(anchor+change-after)>Decimal('.01'): return False,tested
+                    anchor=after;change=Decimal(0)
+            elif after is not None: anchor=after
         return True,tested
     forward,n=chain_ok(pairs);backward,m=chain_ok(list(reversed(pairs)))
-    if not forward and not backward: raise ValueError('The transaction amounts do not reconcile with the running balances. No report was generated.')
+    if not forward and not backward: raise ValueError('Nawa could not verify the amounts against the running balances. No report was generated. Try a fresh bank PDF or CSV export. If you combined statements, upload each separately.')
     if (forward and n) or (backward and m): checks.append('running balances')
     return rows,checks
 
-def read_pdf_report(content):
+def read_pdf_report(content, _recovery=None):
     try:
         reader=PdfReader(BytesIO(content),strict=False)
         if reader.is_encrypted and not reader.decrypt(''):
@@ -155,15 +174,40 @@ def read_pdf_report(content):
     except ValueError: raise
     except Exception:
         raise ValueError('This PDF is damaged or could not be opened. Download a fresh copy from your bank.') from None
+    if not _recovery:
+        try:
+            local=read_labelled_pdf(content,reader)
+            if local:
+                rows,checks=reconcile(local)
+                return [(*row,{'category':None,'category_attempted':False}) for row in rows], [
+                    'Read all '+str(count)+' pages from labelled PDF columns. Matched '+', '.join(checks)+
+                    '. Compare the report with your original statement.']
+        except Exception:
+            # A rejected deterministic extraction is never a partial report.
+            # PDF text engines can reject files the visual reader can still read.
+            pass
+    contexts=[{'period':[],'day':None} for _ in reader.pages]
+    columns='';summary={}
+    try: contexts=document_context(reader)
+    except Exception: pass # Optional text context must not block scanned/visual reading.
+    try: columns=table_hint(content)
+    except Exception: pass
+    try: summary=source_summary(content)
+    except Exception: pass
     # Read bounded groups so long statements cannot silently truncate a single response.
-    all_rows=[];all_raw=[];checks=[]
+    all_rows=[];all_raw=[];checks=[];chunk_results={};row_chunks=[]
     for start in range(0,count,4):
         writer=PdfWriter()
         for page in reader.pages[start:start+4]: writer.add_page(page)
         buffer=BytesIO();writer.write(buffer)
         expected=min(4,count-start)
+        feedback=None
         for validation_attempt in range(2):
-            result=read_chunk(buffer.getvalue())
+            if _recovery and start not in _recovery['retry']:
+                result=_recovery['results'][start]
+            else:
+                hint=' '.join(filter(None,[context_hint(contexts[start]),columns,feedback or (_recovery['feedback'] if _recovery else None)]))
+                result=read_chunk(buffer.getvalue(), feedback=hint) if hint else read_chunk(buffer.getvalue())
             try:
                 if result.get('page_count') != expected:
                     raise ValueError('The AI reader did not return every page. No partial report was saved. Please retry.')
@@ -174,18 +218,37 @@ def read_pdf_report(content):
                     for key in ('opening_balance','closing_balance','total_debits','total_credits','transaction_count'): result[key]=None
                 rows,verified=reconcile(result)
                 break
-            except ValueError:
+            except ValueError as error:
                 if validation_attempt: raise
+                feedback=str(error)
+        chunk_results[start]=result
         if not rows: continue
         for parsed,raw in zip(rows,result['transactions']):
             category=raw.get('category');confidence=raw.get('category_confidence');evidence=raw.get('category_evidence')
             accepted=(category in CATEGORIES and type(confidence) in (int,float) and confidence>=.9 and
                       isinstance(evidence,str) and bool(evidence.strip()) and evidence.casefold() in raw['description'].casefold())
-            all_rows.append((*parsed,{'category':category if accepted else None}))
+            all_rows.append((*parsed,{'category':category if accepted else None,'category_attempted':True}))
         all_raw.extend(result['transactions']);checks.extend(verified)
+        row_chunks.extend([start]*len(rows))
     if not all_rows: raise ValueError('No bank transactions were found in this PDF. Choose a bank statement with transaction details.')
     if count>4:
-        _,verified=reconcile({'complete':True,'transactions':all_raw})
+        try:
+            _,verified=reconcile(dict(summary,complete=True,transactions=all_raw))
+        except ValueError as error:
+            if _recovery: raise
+            # Locate the first inconsistent pair in both possible source orders.
+            # Re-read their source groups; retain unaffected extractions in memory.
+            retry=set()
+            for indices in (list(range(len(all_raw))),list(reversed(range(len(all_raw))))):
+                for a,b in zip(indices,indices[1:]):
+                    before=decimal_field(all_raw[a].get('balance'));after=decimal_field(all_raw[b].get('balance'))
+                    if before is None or after is None: continue
+                    change=Decimal(str(all_raw[b]['amount']))*(1 if all_raw[b]['direction']=='credit' else -1)
+                    if abs(before+change-after)>Decimal('.01'):
+                        retry.update((row_chunks[a],row_chunks[b]));break
+            if not retry: raise
+            return read_pdf_report(content, _recovery={'retry':retry,'results':chunk_results,
+                'feedback':str(error)+' Check first/last transactions, page continuations and row order at page-group boundaries.'})
         checks.extend(verified)
     warning=('Read all '+str(count)+' pages. '+('Matched '+', '.join(sorted(set(checks)))+'. ' if checks else 'No printed totals or usable running balances were available for reconciliation. ')+
              'AI can misread entries; compare the report with your original statement.')

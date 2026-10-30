@@ -124,7 +124,7 @@ def parse_pdf(content):
         for i,row in enumerate(rows):
             d,desc,amount,direction=row[:4]
             item=transaction(d,desc,amount,direction,i)
-            item['aiCategoryAttempted']=True
+            item['aiCategoryAttempted']=row[4].get('category_attempted',True) if len(row)>4 else True
             category=row[4].get('category') if len(row)>4 else None
             if direction=='debit' and category:
                 item.update(type='expense',category=category,review=False,classifiedBy='gemini')
