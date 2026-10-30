@@ -59,3 +59,5 @@ Limits: 12 MB, 65 pages, NGN only, password-protected files need an unlocked cop
 No guarantee of every bank layout or every damaged/blurred document. Missing
 reconciliation fields are disclosed rather than treated as verified. Real bank
 fixtures remain needed before claiming bank-specific accuracy or production readiness.
+
+Shared categorisation regression fix: local PDFs and CSV imports send unresolved debit transfers through purpose classification with full narration/recipient text. Responses require source-substring evidence and high confidence. Description text is preserved without the old 240-character truncation, including backups. All merchant groups are processed in batches rather than silently stopping at 100. AI extraction also explicitly preserves recipient/destination columns. Live provider category decisions are not guaranteed by mocked tests.

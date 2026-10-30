@@ -37,7 +37,7 @@ def validate_rows(result):
             if type(confidence) not in (int,float) or not .9<=confidence<=1: raise ValueError()
         except (KeyError, ValueError, TypeError, InvalidOperation):
             raise ValueError('Some transaction dates or amounts could not be read confidently. Try a clearer statement or CSV.') from None
-        clean.append((day, description.strip()[:240], float(amount), direction))
+        clean.append((day, description.strip(), float(amount), direction))
     return clean
 
 def read_chunk_once(content, feedback=None):
@@ -52,7 +52,10 @@ def read_chunk_once(content, feedback=None):
         '"description":"original narration","amount":123.45,"direction":"debit or credit","confidence":0.99}]}. '
         'For EACH transaction also include category, category_confidence (0 to 1), and category_evidence (the exact words '
         'in its narration supporting that category). Category must be one of '+json.dumps(CATEGORIES)+', or null when unclear. '
-        'Read the ENTIRE description, including payment notes after bank routing codes, references and recipient names. '
+        'Read the ENTIRE description, including payment notes after bank routing codes and references. '
+        'The returned description must preserve the full narration AND any printed recipient, beneficiary, payee, '
+        'counterparty or destination name belonging to that transaction, including separate columns and wrapped lines. '
+        'Do not replace the source narration with a summary or invent recipient details. '
         'Recognise Nigerian foods and food sellers, local transport, utilities and informal purchases. For example fura, '
         'nunu, suya and amala are food; a transfer narration saying payment for fura is Food & drinks. These are examples, '
         'not an exhaustive merchant list. Transfer/TRF/NIBSS is a payment method, not its spending purpose. '

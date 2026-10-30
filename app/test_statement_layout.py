@@ -182,6 +182,10 @@ class LayoutTests(unittest.TestCase):
         c.setFont('Helvetica',4.5)
         for x,label in headings:c.drawString(x,568,label)
         def tx(y,direction,balance,description):
+            # Source cell boundaries must win even when a long note extends
+            # beyond the midpoint between adjacent transaction baselines.
+            c.setFillColorRGB(.96,.96,.96);c.rect(174,y-16,126,32,fill=1,stroke=0)
+            c.setFillColorRGB(0,0,0)
             c.drawString(71,y,'01 Oct 2026 12:00:00');c.drawString(131,y,'01 Oct 2026')
             c.drawString(304,y,'100.00' if direction=='debit' else '--')
             c.drawString(342,y,'200.00' if direction=='credit' else '--')

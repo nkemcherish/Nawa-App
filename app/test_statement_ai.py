@@ -11,6 +11,11 @@ class ValidationTests(unittest.TestCase):
     def test_valid_duplicates_preserved(self):
         row=self.row()
         self.assertEqual(len(validate_rows({'complete':True,'transactions':[row,row]})),2)
+
+    def test_full_narration_is_preserved(self):
+        row=self.row();row['description']='Routing reference '*30+'Recipient Fictional Vendor / dinner catering'
+        parsed=validate_rows(dict(complete=True,transactions=[row]))
+        self.assertEqual(parsed[0][1],row['description'])
     def test_reject_incomplete(self):
         with self.assertRaises(ValueError): validate_rows({'complete':False,'transactions':[self.row()]})
     def test_reject_bad_values(self):

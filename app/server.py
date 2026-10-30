@@ -30,7 +30,7 @@ def date_normal(s):
 
 def transaction(date,description,amount,direction,idx):
     typ='income' if direction=='credit' else 'unknown'
-    desc=description.strip()[:240]
+    desc=description.strip()
     lower=desc.lower()
     cat='Uncategorised'
     if direction=='debit':

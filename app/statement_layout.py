@@ -67,7 +67,8 @@ def header(row):
         elif t.startswith(('withdrawal','debit')) or t=='dr': role='debit'
         elif t.startswith(('deposit','credit')) or t=='cr': role='credit'
         elif t=='balance': role='balance'
-        elif t in ('description','narration','narrative','remarks','details','particulars','destination','category'): role='description'
+        elif t in ('description','narration','narrative','remarks','details','particulars','destination','category',
+                   'recipient','beneficiary','counterparty','payee','beneficiaryname','recipientname'): role='description'
         elif t in ('trans','transaction','txn','posting') and n in ('date','time','details','detail','description','particulars','id','reference'):
             role='date' if n in ('date','time') else 'description' if n in ('details','detail','description','particulars') else 'ignore';span=2
         elif t in ('value','val') and n=='date': role='ignore';span=2
@@ -290,9 +291,18 @@ def read_wallet_columns(content, reader):
             desc_right=next(left for left,role in cols if role in ('debit','credit'))
             header_bottom=max(w['top'] for r in rows[i:i+span] for w in r)+5 if i>=0 else 0
             buckets=[[] for _ in anchors]
+            # Alternating shaded cells encode actual transaction boundaries.
+            # Prefer those source boundaries to a nearest-baseline guess for
+            # tall rows containing recipient names and long payment notes.
+            regions=[]
+            for rect in page.rects:
+                if rect['x0']<=desc_left<rect['x1'] and rect['x1']<=desc_right+3 and rect['bottom']-rect['top']>10:
+                    members=[n for n,(y,_) in enumerate(anchors) if rect['top']<=y<rect['bottom']]
+                    if len(members)==1: regions.append((rect['top'],rect['bottom'],members[0]))
             for word in words:
                 if not desc_left<=word['x0']<desc_right or word['top']<=header_bottom: continue
-                nearest=min(range(len(anchors)),key=lambda n:abs(word['top']-anchors[n][0]))
+                bounded=[n for top,bottom,n in regions if top<=word['top']<bottom]
+                nearest=bounded[0] if len(set(bounded))==1 else min(range(len(anchors)),key=lambda n:abs(word['top']-anchors[n][0]))
                 if abs(word['top']-anchors[nearest][0])>48: return None
                 buckets[nearest].append(word)
             for (_,transaction),bucket in zip(anchors,buckets):
