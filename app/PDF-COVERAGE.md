@@ -12,8 +12,18 @@ transaction particulars/narrative aliases and carries a printed date into comple
 subsequent money rows with blank date cells. Layout research is applied through
 structural signatures, not bank-name mentions: Kuda grouped-day guidance, First Bank
 withdrawal/deposit guidance and separate value-date guidance share the same pipeline.
-OPay-style pre/post-row narration goes to the visual reader with explicit guidance
-instead of being blindly appended to the previous transaction.
+OPay-style wallet tables now have a direct reader: descriptions are assigned to
+the nearest transaction baseline, including continuation pages without headers.
+It requires both printed debit/credit counts, both totals and opening/closing
+balances. A direct extraction whose counts, totals and opening/closing reconcile
+may return with an explicit visible warning when printed running balances do
+not chain. This exception is unavailable to AI extractions. Missing counts,
+incorrect totals, ambiguous descriptions and separate savings sections fall back.
+
+30 October regression: a permissioned six-page OPay statement was read locally
+as 103 transactions; both source counts, debit/credit totals and opening/closing
+balances matched. Individual running balances did not all chain and are disclosed
+as unverified. No customer PDF, names or transaction contents are committed.
 
 Gemini processes pages in groups of four, with statement-period, preceding day
 heading and source column-position context carried into each group. This matters

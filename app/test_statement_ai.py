@@ -129,6 +129,11 @@ class ValidationTests(unittest.TestCase):
             self.assertEqual(read_chunk(b'pdf'),expected)
             self.assertEqual(call.call_count,2)
 
+    def test_persistent_validation_retains_actionable_reason(self):
+        with patch('statement_ai.read_chunk_once',side_effect=ValueError('The whole statement could not be read. Try a clearer PDF or a CSV export.')),patch('statement_ai.time.sleep'):
+            with self.assertRaisesRegex(ValueError,'whole statement could not be read'):
+                read_chunk(b'pdf')
+
     def test_persistent_timeout_is_not_called_bad_pdf(self):
         with patch('statement_ai.read_chunk_once',side_effect=TimeoutError()),patch('statement_ai.time.sleep'):
             with self.assertRaisesRegex(ValueError,'timed out'):read_chunk(b'pdf')

@@ -108,8 +108,13 @@ def read_chunk(content, feedback=None):
         except (URLError,TimeoutError,ConnectionError,OSError):
             if attempt==2: raise ValueError('The connection to the statement reader timed out. Your PDF may still be valid. Please retry.') from None
             time.sleep(1)
-        except (ValueError,KeyError,IndexError,TypeError):
-            if attempt==2: raise ValueError('The AI reader returned an incomplete result after retrying. No partial report was saved. Please retry.') from None
+        except (ValueError,KeyError,IndexError,TypeError) as error:
+            if attempt==2:
+                if type(error) is ValueError:
+                    # Messages raised here are our own validation/configuration
+                    # explanations, not model text or customer transaction data.
+                    raise ValueError(str(error)) from None
+                raise ValueError('The AI reader returned an incomplete result after retrying. No partial report was saved. Please retry.') from None
             # A malformed/truncated response is not proof that the source PDF is unreadable.
             time.sleep(1)
 
@@ -123,7 +128,11 @@ def decimal_field(value):
     except (ValueError, InvalidOperation):
         raise ValueError('A printed statement balance or total could not be read reliably.') from None
 
-def reconcile(result):
+class RunningBalanceMismatch(ValueError):
+    pass
+
+
+def reconcile(result, *, require_running=True):
     rows=validate_rows(result)
     currency=result.get('currency')
     if currency is not None and (not isinstance(currency,str) or currency.strip().upper() not in ('NGN','NGR','NAIRA')):
@@ -159,7 +168,7 @@ def reconcile(result):
             elif after is not None: anchor=after
         return True,tested
     forward,n=chain_ok(pairs);backward,m=chain_ok(list(reversed(pairs)))
-    if not forward and not backward: raise ValueError('Nawa could not verify the amounts against the running balances. No report was generated. Try a fresh bank PDF or CSV export. If you combined statements, upload each separately.')
+    if not forward and not backward and require_running: raise RunningBalanceMismatch('Nawa could not verify the amounts against the running balances. No report was generated. Try a fresh bank PDF or CSV export. If you combined statements, upload each separately.')
     if (forward and n) or (backward and m): checks.append('running balances')
     return rows,checks
 
@@ -178,8 +187,21 @@ def read_pdf_report(content, _recovery=None):
         try:
             local=read_labelled_pdf(content,reader)
             if local:
-                rows,checks=reconcile(local)
-                return [(*row,{'category':None,'category_attempted':False}) for row in rows], [
+                warnings=[]
+                try: rows,checks=reconcile(local)
+                except RunningBalanceMismatch:
+                    # Only the deterministic wallet reader may use this path. It
+                    # requires printed debit AND credit counts and full summaries.
+                    # No flag returned by the AI can enable this exception.
+                    required=('opening_balance','closing_balance','total_debits','total_credits','transaction_count','debit_count','credit_count')
+                    if local.get('source_reader')!='wallet_columns' or not all(k in local for k in required): raise
+                    if local['debit_count']!=sum(r['direction']=='debit' for r in local['transactions']): raise
+                    if local['credit_count']!=sum(r['direction']=='credit' for r in local['transactions']): raise
+                    rows,checks=reconcile(local,require_running=False)
+                    warnings.append('The printed transaction counts, totals and opening/closing balances match. '
+                                    'Individual running balances do not all follow transaction order; they are not verified. '
+                                    'Review the transactions against the original statement.')
+                return [(*row,{'category':None,'category_attempted':False}) for row in rows], warnings+[
                     'Read all '+str(count)+' pages from labelled PDF columns. Matched '+', '.join(checks)+
                     '. Compare the report with your original statement.']
         except Exception:

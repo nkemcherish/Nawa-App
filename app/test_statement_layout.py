@@ -169,6 +169,49 @@ class LayoutTests(unittest.TestCase):
             rows,_=read_pdf_report(fixture())
         self.assertEqual(len(rows),1)
 
+    def wallet_fixture(self, *, count=1, total='100.00', savings=False):
+        out=BytesIO();c=Canvas(out,pagesize=(612,792));c.setFont('Helvetica',6)
+        c.drawString(60,740,'Fictional Wallet Account NGN')
+        for y,labels,values in [(680,['Opening Balance','Total Debit','Debit Count'],['1,000.00',total,str(count)]),
+                               (640,['Closing Balance','Total Credit','Credit Count'],['1,100.00','200.00','1'])]:
+            for x,label,value in zip([60,224,383],labels,values):
+                c.drawString(x,y,label);c.drawString(x,y-15,value)
+        c.drawString(378,580,'Balance')
+        headings=[(71,'Trans. Time'),(131,'Value Date'),(178,'Description'),(304,'Debit(NGN)'),
+                  (342,'Credit(NGN)'),(378,'After(NGN)'),(422,'Channel'),(478,'Transaction Reference')]
+        c.setFont('Helvetica',4.5)
+        for x,label in headings:c.drawString(x,568,label)
+        def tx(y,direction,balance,description):
+            c.drawString(71,y,'01 Oct 2026 12:00:00');c.drawString(131,y,'01 Oct 2026')
+            c.drawString(304,y,'100.00' if direction=='debit' else '--')
+            c.drawString(342,y,'200.00' if direction=='credit' else '--')
+            c.drawString(378,y,balance)
+            c.drawString(178,y+9,description);c.drawString(178,y-8,'Fictional narration continuation')
+        tx(540,'debit','850.00','Fictional cafe')
+        c.showPage();c.setFont('Helvetica',4.5)
+        if savings:c.drawString(60,750,'Savings Account')
+        # No repeated table header on continuation pages.
+        tx(700,'credit','1,100.00','Fictional salary')
+        c.save();return out.getvalue()
+
+    def test_wallet_counts_and_totals_can_verify_nonsequential_balances(self):
+        with patch('statement_ai.read_chunk') as ai:
+            rows,warnings=read_pdf_report(self.wallet_fixture())
+        ai.assert_not_called()
+        self.assertEqual(len(rows),2)
+        self.assertIn('Fictional cafe',rows[0][1])
+        self.assertIn('Fictional salary',rows[1][1])
+        self.assertNotIn('salary',rows[0][1])
+        self.assertTrue(any('Individual running balances' in w for w in warnings))
+        self.assertTrue(any('transaction count' in w for w in warnings))
+
+    def test_wallet_invalid_counts_totals_or_savings_never_bypass_checks(self):
+        for kwargs in (dict(count=2),dict(total='101.00'),dict(savings=True)):
+            with self.subTest(kwargs=kwargs),patch('statement_ai.read_chunk',side_effect=ValueError('fallback')) as ai:
+                with self.assertRaisesRegex(ValueError,'fallback'):
+                    read_pdf_report(self.wallet_fixture(**kwargs))
+                ai.assert_called_once()
+
     def test_missing_dates_are_not_guessed(self):
         content=fixture(grouped=True).replace(b'01/09/2026',b'xx/xx/xxxx')
         # Reportlab compresses streams, so use a reader stub with missing metadata.

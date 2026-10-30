@@ -216,6 +216,7 @@ def printed_summary(rows):
             ('total','credit'):'total_credits',('total','credits'):'total_credits',
             ('total','money','in'):'total_credits',('total','money','out'):'total_debits',
             ('money','in'):'total_credits',('money','out'):'total_debits'}
+    labels.update({('debit','count'):'debit_count',('credit','count'):'credit_count'})
     found={}
     for index,row in enumerate(rows):
         matches=[]
@@ -231,12 +232,77 @@ def printed_summary(rows):
             below=[' '.join(w['text'] for w in r if left<=w['x0']<right)
                    for r in rows[index+1:index+4] if r[0]['top']-row[0]['top']<32]
             for candidate in [inline]+below:
+                if key.endswith('_count'):
+                    if candidate.strip().isdigit(): found[key]=int(candidate.strip());break
+                    continue
                 # Accept only one printed money value, never pick from surrounding data.
                 if not re.fullmatch(r'\s*(?:NGN\s*|₦\s*)?[\d,]+\.\d{2}\s*',candidate,re.I): continue
                 value=str(amount(candidate))
                 if key in found and found[key]!=value: return {} # multiple account summaries
                 found[key]=value;break
     return found
+
+
+def read_wallet_columns(content, reader):
+    """Read the observed OPay wallet table with nearest-row narration attachment.
+
+    Separate savings sections are rejected, never silently dropped. Printed
+    debit/credit counts are required so an omitted row cannot pass unnoticed.
+    """
+    import pdfplumber
+    result={'complete':True,'currency':'NGN','page_count':len(reader.pages),'transactions':[]}
+    debit_count=credit_count=0;previous_cols=None;previous_width=None
+    with pdfplumber.open(BytesIO(content)) as pdf:
+        for page_no,page in enumerate(pdf.pages):
+            words=page.extract_words();rows=lines(words)
+            if not words: return None
+            text=' '.join(w['text'] for w in words)
+            if re.search(r'Savings\s+Account',text,re.I): return None
+            selected=None
+            for i,row in enumerate(rows):
+                cols,span=header_rows(rows,i)
+                if not cols or not any(role=='balance' for _,role in cols): continue
+                tokens={token(w['text']) for r in rows[i:i+span] for w in r}
+                if {'channel','reference','value'}.issubset(tokens):
+                    selected=(i,span,cols);break
+            if not selected:
+                if previous_cols is None or previous_width!=page.width: return None
+                selected=(-1,1,previous_cols)
+            i,span,cols=selected
+            previous_cols=cols;previous_width=page.width
+            if page_no==0:
+                result.update(printed_summary(rows[:i]))
+                if not all(k in result for k in ('opening_balance','closing_balance','total_debits','total_credits','debit_count','credit_count')): return None
+            anchors=[]
+            for row in rows[i+span:]:
+                values=cells(row,cols);day=parse_date(values.get('date',''))
+                if not day: continue
+                debit=amount(values.get('debit',''));credit=amount(values.get('credit',''))
+                if (debit>0)==(credit>0) or debit<0 or credit<0 or not values.get('balance'): return None
+                balance=amount(values['balance'])
+                date_words=[w for w in row if cols[0][0]<=w['x0']<cols[1][0]]
+                y=min(w['top'] for w in date_words)
+                anchors.append((y,{'date':day.isoformat(),'amount':str(debit or credit),
+                    'direction':'debit' if debit else 'credit','balance':str(balance),'confidence':1.,'description':''}))
+                debit_count+=int(debit>0);credit_count+=int(credit>0)
+            if not anchors: return None
+            desc_left=next(left for left,role in cols if role=='description')
+            desc_right=next(left for left,role in cols if role in ('debit','credit'))
+            header_bottom=max(w['top'] for r in rows[i:i+span] for w in r)+5 if i>=0 else 0
+            buckets=[[] for _ in anchors]
+            for word in words:
+                if not desc_left<=word['x0']<desc_right or word['top']<=header_bottom: continue
+                nearest=min(range(len(anchors)),key=lambda n:abs(word['top']-anchors[n][0]))
+                if abs(word['top']-anchors[nearest][0])>48: return None
+                buckets[nearest].append(word)
+            for (_,transaction),bucket in zip(anchors,buckets):
+                transaction['description']=' '.join(w['text'] for row in lines(bucket) for w in row)
+                if not transaction['description']: return None
+                result['transactions'].append(transaction)
+    if debit_count!=result['debit_count'] or credit_count!=result['credit_count']: return None
+    result['transaction_count']=debit_count+credit_count
+    result['source_reader']='wallet_columns'
+    return result
 
 
 def read_labelled_pdf(content, reader):
@@ -272,7 +338,8 @@ def read_labelled_pdf(content, reader):
                 if found:
                     heading_words=[w for r in page_rows[index:index+span] for w in r]
                     # Pre-row narration attachment requires the visual fallback.
-                    if {'channel','reference','value'}.issubset({token(w['text']) for w in heading_words}): return None
+                    if {'channel','reference','value'}.issubset({token(w['text']) for w in heading_words}):
+                        return read_wallet_columns(content,reader)
                     cols=found;seen_header=True
                     skip_until=index+span
                     match=DAY.search(text)

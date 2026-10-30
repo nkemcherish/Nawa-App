@@ -30,5 +30,6 @@ const restored=validateBackup({format:'nawa-backup',version:1,reports:[{source:'
 if(restored[0].transactions.length!==demo.length||stats(restored[0].transactions).spend!==stats(demo).spend)throw Error('Backup restoration must preserve figures');
 let rejected=false;try{validateBackup({format:'nawa-backup',version:1,reports:[{transactions:[{...demo[0],amount:'oops'}]}]})}catch{rejected=true}if(!rejected)throw Error('Invalid backup accepted');
 if(!settings().includes('Appearance')||!settings().includes('Restore report backup'))throw Error('Missing preferences and backup controls');
+state.isDemo=false;state.warnings=['Individual running balances are not verified.'];if(!report().includes('role="status"')||!report().includes('Statement checks and warnings'))throw Error('Statement reconciliation warning must be visible');
 `,context);
 console.log('Review grouping, debit totals, own-account exclusions, report and navigation checks passed');

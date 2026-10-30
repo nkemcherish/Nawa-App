@@ -37,7 +37,7 @@ that is not a claim of bank-specific verification.
 | Kuda | Official export guide; historical public PDF layout | Fictional grouped-day PDF regressions; affected customer PDF untested |
 | First Bank | Public source and redacted PDF sample | Fictional withdrawal/deposit and value-date regressions; sample safely falls back |
 | Zenith | Public source and redacted PDF sample | Fictional debit/credit plus value-date regressions; sample safely falls back |
-| OPay | Public source and redacted PDF sample | Column context and AI guidance; no claim of live bank certification |
+| OPay | Public source, redacted PDF sample and one permissioned six-page regression statement | Direct wallet reader verified on the supplied statement: 103 rows and printed counts/totals/opening/closing matched; running-balance limitation disclosed. Other variants remain unverified |
 | PalmPay | Public source and redacted PDF sample | AI fallback; no deterministic no-balance reader claimed |
 | UBA | Public parser source | Header aliases added; current real PDF untested |
 | Access | Public parser source/notebook | Generic labelled-column reader and AI fallback; current real PDF untested |
